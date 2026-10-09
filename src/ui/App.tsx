@@ -1,37 +1,766 @@
-import {useEffect,useMemo,useState} from 'react';import{Activity,AlertTriangle,ArrowDownToLine,BookOpen,CalendarDays,CheckCircle2,ChevronDown,ClipboardCheck,DoorOpen,Download,FileSpreadsheet,GraduationCap,LayoutDashboard,Menu,Plus,RefreshCw,ShieldCheck,SlidersHorizontal,Users,UserRoundCog,X}from'lucide-react';import{makeDemoData}from'../engine/demo';import{generatePlan,replan,slotsFor,validatePlan,parseCsv,csvSafe}from'../engine/engine';import type{AppState,Plan,PlanRevision,Student}from'../engine/types';
-const STORE='examflow-state-v1';type Page='Dashboard'|'Planner'|'Students'|'Subjects & Sessions'|'Rooms'|'Invigilators'|'Validation'|'Review & Export';
-const nav:{name:Page;icon:any;group:string}[]=[{name:'Dashboard',icon:LayoutDashboard,group:'WORKSPACE'},{name:'Planner',icon:SlidersHorizontal,group:'WORKSPACE'},{name:'Validation',icon:ShieldCheck,group:'WORKSPACE'},{name:'Review & Export',icon:FileSpreadsheet,group:'WORKSPACE'},{name:'Students',icon:GraduationCap,group:'DATA MANAGEMENT'},{name:'Subjects & Sessions',icon:CalendarDays,group:'DATA MANAGEMENT'},{name:'Rooms',icon:DoorOpen,group:'DATA MANAGEMENT'},{name:'Invigilators',icon:Users,group:'DATA MANAGEMENT'}];
-function loadState():{state:AppState|null;bad:boolean}{try{const raw=localStorage.getItem(STORE);if(!raw)return{state:null,bad:false};const s=JSON.parse(raw);if(s.schemaVersion!==1||!Array.isArray(s.students)||!Array.isArray(s.rooms)||!Array.isArray(s.sessions))return{state:null,bad:true};return{state:s,bad:false};}catch{return{state:null,bad:true}}}
-function download(name:string,content:string,type='text/csv;charset=utf-8'){const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();URL.revokeObjectURL(url)}
-function csv(rows:string[][]){return rows.map(row=>row.map(x=>`"${csvSafe(x).replace(/"/g,'""')}"`).join(',')).join('\r\n')}
-export default function App(){const initial=useMemo(loadState,[]);const[state,setState]=useState<AppState|null>(initial.state);const[page,setPage]=useState<Page>('Dashboard');const[slotId,setSlotId]=useState('');const[toast,setToast]=useState('');const[mobile,setMobile]=useState(false);const[search,setSearch]=useState('');const[studentForm,setStudentForm]=useState({usn:'',name:''});const[showAdd,setShowAdd]=useState(false);const[importText,setImportText]=useState('');const[importErrors,setImportErrors]=useState<string[]>([]);const[disruption,setDisruption]=useState('withdraw-room');const[target,setTarget]=useState('R1');const[capacity,setCapacity]=useState('15');const[preview,setPreview]=useState<{state:AppState;plan:Plan;diff:any;before:PlanRevision}|null>(null);
- useEffect(()=>{if(state)try{localStorage.setItem(STORE,JSON.stringify(state))}catch{setToast('Storage is unavailable or full. Export your data to avoid loss.')}},[state]);useEffect(()=>{if(initial.bad)setToast('Stored data was invalid or outdated; start with Load Demo Data.');},[]);
- const slots=state?slotsFor(state):[];useEffect(()=>{if(slots.length&&!slots.some(s=>s.id===slotId))setSlotId(slots[0].id)},[state?.sessions.length]);const current=state?.revisions.find(r=>r.id===state.currentRevisionId)??null;const activeSlot=slots.find(s=>s.id===slotId);const regs=state?.registrations??[];const assigned=current?.assignments.length??0;const totalSeats=state?.rooms.filter(r=>r.status==='active').reduce((n,r)=>n+Math.min(r.rows*r.columns,r.capacityOverride??r.rows*r.columns),0)??0;
- const notify=(s:string)=>{setToast(s);setTimeout(()=>setToast(''),4500)};const loadDemo=()=>{if(state&&!confirm('Replace current data with the original demo dataset? Export anything you need first.'))return;setState(makeDemoData());setPreview(null);setPage('Dashboard');notify('Demo dataset loaded. No plan has been generated yet.');};
- const generate=()=>{if(!state||!slotId)return;try{const plan=generatePlan(state,slotId,new Date().toISOString());const revision:PlanRevision={...plan,id:`REV-${(state.revisions.length+1).toString().padStart(3,'0')}`,parentRevisionId:current?.id,createdAt:new Date().toISOString(),changeDescription:'Generated seating plan',slotId};setState({...state,revisions:[...state.revisions,revision],currentRevisionId:revision.id});setPage('Planner');notify(`${plan.validation.status}: ${plan.assignments.length} seats assigned, ${plan.unassigned.length} registrations unassigned.`)}catch(e){notify(e instanceof Error?e.message:'Could not generate plan')}};
- const runReplan=()=>{if(!state||!current){notify('Generate a plan before replanning.');return}const type=disruption as any;const result=replan(state,current,{type,id:target,capacity:Number(capacity)},new Date().toISOString());setPreview({...result,before:current});notify(`Replan computed in ${result.plan.computeMs} ms. Review the before/after result.`)};
- const acceptPreview=()=>{if(!state||!preview)return;const r:PlanRevision={...preview.plan,id:`REV-${(state.revisions.length+1).toString().padStart(3,'0')}`,parentRevisionId:preview.before.id,createdAt:new Date().toISOString(),changeDescription:`Replan: ${disruption} — ${target}`,slotId:preview.plan.slotId};setState({...preview.state,revisions:[...state.revisions,r],currentRevisionId:r.id});setPreview(null);notify(`Revision accepted: ${r.validation.status}.`)};
- const addStudent=()=>{if(!state)return;const usn=studentForm.usn.trim().toUpperCase(),name=studentForm.name.trim();if(!usn||!name){notify('USN and name are required.');return}if(state.students.some(s=>s.usn.toLowerCase()===usn.toLowerCase())){notify('That USN already exists.');return}setState({...state,students:[...state.students,{id:`ST-${Date.now()}`,usn,name}]});setStudentForm({usn:'',name:''});setShowAdd(false);notify('Student added. Register the student for a session to include them in planning.')};
- const importCsv=()=>{if(!state)return;const rows=parseCsv(importText),errors:string[]=[],existing=new Set(state.students.map(s=>s.usn.toLowerCase())),seen=new Set<string>(),valid:Student[]=[];const header=rows[0]?.map(x=>x.trim().toLowerCase());if(!header||!header.includes('usn')||!header.includes('name')){setImportErrors(['Header must contain usn,name. Optional columns: subject_code,session_date.']);return}const ui=header.indexOf('usn'),ni=header.indexOf('name');rows.slice(1).forEach((r,i)=>{if(r.length!==header.length){errors.push(`Row ${i+2}: malformed row (${r.length} fields, expected ${header.length}).`);return}const usn=(r[ui]??'').trim().toUpperCase(),name=(r[ni]??'').trim();if(!usn||!name){errors.push(`Row ${i+2}: missing USN or name.`);return}if(existing.has(usn)||seen.has(usn)){errors.push(`Row ${i+2}: duplicate USN ${usn}.`);return}const ci=header.indexOf('subject_code');if(ci>=0&&r[ci].trim()&&!state.subjects.some(s=>s.code.toLowerCase()===r[ci].trim().toLowerCase())){errors.push(`Row ${i+2}: unknown subject code ${r[ci]}.`);return}seen.add(usn);valid.push({id:`ST-IMP-${i+2}-${usn}`,usn,name})});setImportErrors(errors);if(valid.length&&confirm(`Import ${valid.length} valid student row(s)? ${errors.length} invalid row(s) will be skipped and remain listed.`)){setState({...state,students:[...state.students,...valid]});notify(`${valid.length} students imported; ${errors.length} rows rejected.`)}};
- const exportAssignments=()=>{if(!state||!current){notify('No current plan to export.');return}download('examflow-seating.csv',csv([['USN','Student','Subject','Session','Room','Row','Column'],...current.assignments.map(a=>[state.students.find(s=>s.id===a.studentId)?.usn??a.studentId,state.students.find(s=>s.id===a.studentId)?.name??'',state.subjects.find(s=>s.id===state.sessions.find(x=>x.id===a.sessionId)?.subjectId)?.code??'',a.sessionId,state.rooms.find(r=>r.id===a.roomId)?.name??a.roomId,String(a.row),String(a.column)])]));notify('Seating CSV downloaded.');};
- const exportConflicts=()=>{if(!current){notify('Generate a plan first.');return}download('examflow-conflicts.csv',csv([['Student ID','Session','Reason','Detail'],...current.unassigned.map(u=>[u.studentId,u.sessionId,u.reason,u.detail]),...current.validation.hardViolations.map(x=>['','', 'HARD_VIOLATION',x]),...current.validation.softViolations.map(x=>['','', 'SOFT_VIOLATION',x])]));};
- const roomRows=(roomId:string)=>current?.assignments.filter(a=>a.roomId===roomId)??[];
- return <div className="app-shell"><aside className={`sidebar ${mobile?'open':''}`}><div className="brand"><div className="brand-mark"><BookOpen size={21}/></div><div><strong>ExamFlow</strong><span>EXAM OPERATIONS</span></div><button className="icon-btn mobile-close" onClick={()=>setMobile(false)} aria-label="Close navigation"><X size={18}/></button></div><div className="campus-pill"><span className="pulse"/> INTERNAL PLANNER <ChevronDown size={14}/></div>{['WORKSPACE','DATA MANAGEMENT'].map(group=><div className="nav-group" key={group}><p>{group}</p>{nav.filter(n=>n.group===group).map(n=><button key={n.name} onClick={()=>{setPage(n.name);setMobile(false)}} className={`nav-item ${page===n.name?'selected':''}`}><n.icon size={18}/><span>{n.name}</span>{n.name==='Validation'&&current&&<i className={current.validation.status==='VALID'?'dot-green':'dot-amber'}/>}</button>)}</div>)}<div className="sidebar-bottom"><div className="secure-icon"><ShieldCheck size={17}/></div><div><b>Local-first storage</b><span>Your data stays in this browser.</span></div></div></aside>
- <main className="main-area"><header className="topbar"><div className="topbar-left"><button className="icon-btn mobile-menu" onClick={()=>setMobile(true)} aria-label="Open navigation"><Menu size={20}/></button><span className="breadcrumb">Workspace</span><span className="crumb-slash">/</span><b>{page}</b></div><div className="topbar-right"><span className="offline-tag"><span/> OFFLINE READY</span><span className="avatar">EF</span></div></header><div className="content"><div className="page-heading"><div><div className="eyebrow">BST INTERNAL HACKATHON <span>•</span> TEAM 2392608111</div><h1>{page}</h1><p>{({Dashboard:'A clear view of exam readiness, capacity, and planning status.',Planner:'Generate, inspect, and replan seating assignments.',Students:'Manage student records and safely import CSV data.','Subjects & Sessions':'Review exam sessions and overlapping planning slots.',Rooms:'Room availability, usable capacity, and seating layout.',Invigilators:'Staff availability and room coverage.',Validation:'Independent checks for hard constraints and seating quality.','Review & Export':'Review assignments, revision history, and export reports.'} as Record<Page,string>)[page]}</p></div><div className="heading-actions">{state?.students.some(s=>s.usn==='DEMO0001')&&<span className="demo-badge"><span/> DEMO DATA</span>}<button className="btn btn-secondary" onClick={loadDemo}><RefreshCw size={15}/> Load Demo</button></div></div>
- {!state&&<div className="empty-hero"><div className="empty-icon"><ClipboardCheck size={30}/></div><h2>Start with a working scenario</h2><p>Load the fictional demo dataset to explore 64 students, 4 subjects, 4 rooms and real seating generation.</p><button className="btn btn-primary" onClick={loadDemo}>Load Demo Data <ArrowDownToLine size={16}/></button></div>}
- {state&&page==='Dashboard'&&<><div className="status-banner"><div className={`status-symbol ${current&&['VALID','VALID_WITH_WARNINGS'].includes(current.validation.status)?'good':''}`}><Activity size={20}/></div><div className="status-copy"><strong>{current?`Current plan · ${current.validation.status.replaceAll('_',' ')}`:'No seating plan generated'}</strong><span>{current?`${current.assignments.length} students assigned · ${current.unassigned.length} unassigned registrations · last computed ${new Date(current.createdAt).toLocaleString()}`:'Load data, select a planning slot, then generate and validate a plan.'}</span></div><button className="btn btn-primary" onClick={()=>current?setPage('Planner'):generate()}>{current?'Open planner':'Generate plan'} <span>→</span></button></div><div className="metric-grid"><Metric icon={GraduationCap} label="Students" value={state.students.length} note={`${state.registrations.length} registrations`} tone="blue"/><Metric icon={BookOpen} label="Subjects" value={state.subjects.length} note={`${state.sessions.length} exam sessions`} tone="violet"/><Metric icon={DoorOpen} label="Usable seats" value={totalSeats} note={`${state.rooms.filter(r=>r.status==='active').length} active rooms`} tone="green"/><Metric icon={Users} label="Available staff" value={state.invigilators.filter(i=>i.status==='active').length} note={`${state.invigilators.length} total invigilators`} tone="amber"/></div><div className="dashboard-grid"><section className="panel overview-panel"><PanelTitle title="Planning overview" subtitle="Upcoming exam slots and registration demand"/><div className="slot-list">{slots.map((s,i)=>{const n=regs.filter(r=>s.sessions.includes(r.sessionId)).length;return <button className={`slot-row ${slotId===s.id?'slot-active':''}`} key={s.id} onClick={()=>setSlotId(s.id)}><div className="slot-date"><b>{new Date(`${s.date}T12:00:00`).toLocaleDateString('en-US',{month:'short',day:'2-digit'})}</b><span>{new Date(`${s.date}T12:00:00`).toLocaleDateString('en-US',{weekday:'short'})}</span></div><div className="slot-info"><strong>Slot {i+1} <span className="mini-pill">{s.sessions.length} session{s.sessions.length>1?'s':''}</span></strong><span>{s.start}–{s.end} · {s.sessions.map(id=>state.subjects.find(sub=>sub.id===state.sessions.find(x=>x.id===id)?.subjectId)?.code).join(', ')}</span></div><div className="slot-demand"><b>{new Set(regs.filter(r=>s.sessions.includes(r.sessionId)).map(r=>r.studentId)).size}</b><span>students</span></div><span className="arrow">↗</span></button>})}</div><div className="panel-footer"><span>Selected: <b>{activeSlot?.date??'—'}</b></span><button className="text-btn" onClick={()=>setPage('Subjects & Sessions')}>View all sessions →</button></div></section><section className="panel readiness-panel"><PanelTitle title="Readiness checks" subtitle="Signals that need attention"/><div className="readiness-list"><Readiness icon={CheckCircle2} title="Room capacity configured" detail={`${totalSeats} usable seats across active rooms`} good={totalSeats>0}/><Readiness icon={AlertTriangle} title="Overlapping exam registrations" detail={current?`${current.unassigned.filter(u=>u.reason==='EXAM_CLASH').length} clash entries flagged in current plan`:'Two deliberate clash registrations in demo'} good={false}/><Readiness icon={Users} title="Invigilator availability" detail={`${state.invigilators.filter(i=>i.status==='active'&&!i.unavailableSessionIds.some(id=>activeSlot?.sessions.includes(id))).length} staff available for selected slot`} good={true}/><Readiness icon={ShieldCheck} title="Independent validation" detail={current?`${current.validation.hardViolations.length} hard violation(s)`: 'Run generation to validate assignments'} good={!!current&&current.validation.hardViolations.length===0}/></div><div className="readiness-foot"><span className="legend-dot amber"/> Warnings are surfaced, not hidden.</div></section></div><section className="panel quick-panel"><PanelTitle title="Quick actions" subtitle="Go straight to the work that matters"/><div className="quick-actions"><QuickAction icon={SlidersHorizontal} title="Generate a seating plan" text="Assign students and staff for a slot." onClick={()=>{setPage('Planner');if(!current)generate()}}/><QuickAction icon={RefreshCw} title="Replan after disruption" text="Withdraw a room or invigilator and compare." onClick={()=>setPage('Planner')}/><QuickAction icon={ShieldCheck} title="Validate current plan" text="Inspect checks and the reason for status." onClick={()=>setPage('Validation')}/><QuickAction icon={Download} title="Export seating CSV" text="Download the current assignments." onClick={exportAssignments}/></div></section></>}
- {state&&page==='Planner'&&<><div className="planner-controls panel"><div className="control-field"><label>PLANNING SLOT</label><select value={slotId} onChange={e=>setSlotId(e.target.value)}>{slots.map((s,i)=><option key={s.id} value={s.id}>Slot {i+1} · {s.date} · {s.start}–{s.end}</option>)}</select></div><div className="demand-chip"><span>Registrations</span><b>{regs.filter(r=>activeSlot?.sessions.includes(r.sessionId)).length}</b></div><div className="demand-chip"><span>Unique students</span><b>{new Set(regs.filter(r=>activeSlot?.sessions.includes(r.sessionId)).map(r=>r.studentId)).size}</b></div><button className="btn btn-primary" onClick={generate}><SlidersHorizontal size={16}/> Generate plan</button></div>{current&&current.slotId===slotId?<><div className={`result-strip ${current.validation.status==='VALID'?'valid':current.validation.status==='INVALID'||current.validation.status==='INFEASIBLE'?'invalid':'warning'}`}><div className="result-icon">{current.validation.status==='VALID'?<CheckCircle2/>:<AlertTriangle/>}</div><div><b>{current.validation.status.replaceAll('_',' ')}</b><span>{current.assignments.length} assigned · {current.unassigned.length} unassigned · {current.uncovered.length} uncovered rooms</span></div><div className="result-meta"><span>COMPUTE TIME</span><b>{current.computeMs} ms</b></div><button className="text-btn" onClick={()=>setPage('Validation')}>Full validation →</button></div><div className="legend-row"><span><i className="seat-dot math"/> MATH101</span><span><i className="seat-dot phy"/> PHY101</span><span><i className="seat-dot che"/> CHE101</span><span><i className="seat-dot eng"/> ENG101</span><span><i className="seat-dot empty"/> Empty seat</span><span><i className="seat-dot blocked"/> Blocked / unavailable</span></div><div className="room-grid">{state.rooms.filter(r=>current.assignments.some(a=>a.roomId===r.id)||r.status!=='active').map(room=><section className="panel room-card" key={room.id}><div className="room-card-head"><div><div className="room-name"><DoorOpen size={16}/><b>{room.name}</b>{room.status!=='active'&&<span className="mini-pill danger">{room.status}</span>}</div><span>{room.building} · {room.rows} × {room.columns}</span></div><div className="room-occupancy"><b>{roomRows(room.id).length}</b><span>/ {Math.min(room.rows*room.columns,room.capacityOverride??room.rows*room.columns)} seats</span></div></div><div className="seat-grid-wrap"><div className="seat-grid" style={{gridTemplateColumns:`repeat(${room.columns}, minmax(29px,1fr))`}}>{Array.from({length:room.rows*room.columns},(_,idx)=>{const row=Math.floor(idx/room.columns)+1,col=idx%room.columns+1,cap=Math.min(room.rows*room.columns,room.capacityOverride??room.rows*room.columns),blocked=idx>=cap||room.status!=='active',assignment=roomRows(room.id).find(a=>a.row===row&&a.column===col),student=assignment&&state.students.find(s=>s.id===assignment.studentId),subject=assignment&&state.subjects.find(s=>s.id===state.sessions.find(x=>x.id===assignment.sessionId)?.subjectId);return <div key={idx} aria-label={blocked?`${room.name} row ${row} column ${col}, blocked`:assignment?`${student?.usn}, ${student?.name}, ${subject?.code}, row ${row}, column ${col}`:`${room.name}, empty row ${row} column ${col}`} title={blocked?'Blocked seat':assignment?`${student?.name} · ${student?.usn} · ${subject?.code}`:`Row ${row}, Column ${col} · Empty`} className={`seat ${blocked?'blocked':assignment?`filled ${subject?.code.startsWith('MATH')?'math':subject?.code.startsWith('PHY')?'phy':subject?.code.startsWith('CHE')?'che':'eng'}`:'empty'}`}>{blocked?<X size={12}/>:student?student.usn.slice(-4):`${row}.${col}`}</div>})}</div></div><div className="room-card-foot"><span>{current.invigilatorAssignments.filter(a=>a.roomId===room.id).map(a=>state.invigilators.find(i=>i.id===a.invigilatorId)?.name).join(', ')||'No invigilator assigned'}</span><span className="small-status">{roomRows(room.id).length?'In use':'Not used'}</span></div></section>)}</div><section className="panel disruption-panel"><PanelTitle title="Disruption & replanning" subtitle="Calculate a new plan, inspect the diff, then accept or discard it."/><div className="disruption-form"><div className="control-field"><label>DISRUPTION</label><select value={disruption} onChange={e=>{setDisruption(e.target.value);setPreview(null);setTarget(e.target.value.includes('invigilator')?'INV02':'R1')}}><option value="withdraw-room">Withdraw room</option><option value="reduce-capacity">Reduce room capacity</option><option value="invigilator-unavailable">Make invigilator unavailable</option><option value="restore-room">Restore room</option><option value="restore-invigilator">Restore invigilator</option></select></div><div className="control-field"><label>{disruption.includes('invigilator')?'INVIGILATOR':'ROOM'}</label><select value={target} onChange={e=>setTarget(e.target.value)}>{(disruption.includes('invigilator')?state.invigilators:state.rooms).map(x=><option key={x.id} value={x.id}>{'name'in x?x.name:x.name} · {x.id}</option>)}</select></div>{disruption==='reduce-capacity'&&<div className="control-field"><label>NEW USABLE CAPACITY</label><input type="number" min="0" value={capacity} onChange={e=>setCapacity(e.target.value)}/></div>}<button className="btn btn-primary" onClick={runReplan}><RefreshCw size={15}/> Replan</button></div>{preview&&<><div className="before-after"><div className="compare-card"><span>BEFORE</span><b>{preview.before.validation.status}</b><p>{preview.before.assignments.length} seated · {preview.before.unassigned.length} unassigned</p></div><div className="compare-arrow">→</div><div className="compare-card after"><span>AFTER</span><b>{preview.plan.validation.status}</b><p>{preview.plan.assignments.length} seated · {preview.plan.unassigned.length} unassigned</p></div></div><div className="diff-grid"><Diff label="Students moved" value={preview.diff.moved}/><Diff label="Students unchanged" value={preview.diff.unchanged}/><Diff label="New unassigned" value={preview.diff.newlyUnassigned}/><Diff label="Invigilator changes" value={preview.diff.changedInvigilators}/><Diff label="Compute time" value={`${preview.plan.computeMs} ms`}/></div><p className="explain-note">{preview.diff.fallback?'Full regeneration used; assignments may move beyond affected students.':'A new plan was calculated from the updated availability. Review the result before accepting.'} Status and conflicts are recomputed from the plan.</p><div className="button-row"><button className="btn btn-secondary" onClick={()=>setPreview(null)}>Discard preview</button><button className="btn btn-primary" onClick={acceptPreview}>Accept revision</button></div></>}</section></>:<div className="empty-panel"><ClipboardCheck size={24}/><b>No plan for this slot yet</b><span>Generate a plan to inspect seat assignments and validate constraints.</span></div>}</>}
- {state&&page==='Validation'&&<><div className="validation-summary panel"><div className={`large-status ${current?.validation.status==='VALID'?'green':''}`}><ShieldCheck size={25}/></div><div><span>OVERALL STATUS</span><h2>{current?current.validation.status.replaceAll('_',' '):'Not validated'}</h2><p>{current?`Status derived from ${current.validation.hardViolations.length} hard violation(s), ${current.validation.softViolations.length} soft issue(s), ${current.unassigned.length} unassigned and ${current.uncovered.length} uncovered.`:'Generate a plan first. The validator independently checks actual assignments.'}</p></div><button className="btn btn-secondary" disabled={!current} onClick={()=>{if(!state||!current)return;const v=validatePlan(state,current);setState({...state,revisions:state.revisions.map(r=>r.id===current.id?{...r,validation:v}:r)});notify(`Re-validation complete: ${v.status}.`)}}> <RefreshCw size={15}/> Re-validate</button></div><section className="panel"><PanelTitle title="Constraint checklist" subtitle="Checks are recomputed from the current plan, not copied from the generator."/><div className="checks-list">{(current?.validation.checks??[]).map((c,i)=><div className="check-row" key={c.name}><div className={`check-icon ${c.passed?'pass':'fail'}`}>{c.passed?<CheckCircle2 size={17}/>:<AlertTriangle size={17}/>}</div><div className="check-copy"><b>{c.name}</b><span>{c.detail}</span></div><div className="check-count"><b>{c.count}</b><span>{c.passed?'PASS':'ISSUE'}</span></div></div>)}</div></section><div className="two-panels"><section className="panel"><PanelTitle title="Unassigned registrations" subtitle="Every exception has an explicit reason."/><div className="exception-list">{current?.unassigned.length?current.unassigned.map((u,i)=><div className="exception-row" key={`${u.studentId}-${u.sessionId}-${i}`}><AlertTriangle size={16}/><div><b>{state.students.find(s=>s.id===u.studentId)?.usn??u.studentId} · {u.sessionId}</b><span>{u.reason}: {u.detail}</span></div></div>):<p className="muted-pad">No unassigned registrations.</p>}</div></section><section className="panel"><PanelTitle title="Uncovered rooms" subtitle="Staffing gaps that prevent a complete plan."/><div className="exception-list">{current?.uncovered.length?current.uncovered.map(u=><div className="exception-row" key={u.roomId}><Users size={16}/><div><b>{state.rooms.find(r=>r.id===u.roomId)?.name??u.roomId} · {u.assigned}/{u.required} staff</b><span>{u.reason}</span></div></div>):<p className="muted-pad">All used rooms have required coverage.</p>}</div></section></div>{current?.validation.suggestedActions.length?<section className="panel"><PanelTitle title="Suggested corrective actions"/><ul className="action-list">{current.validation.suggestedActions.map(x=><li key={x}>{x}</li>)}</ul></section>:null}</>}
- {state&&page==='Students'&&<><div className="toolbar panel"><div className="search-box"><span>⌕</span><input placeholder="Search name or USN…" value={search} onChange={e=>setSearch(e.target.value)}/></div><button className="btn btn-secondary" onClick={()=>download('examflow-students-template.csv','usn,name,subject_code,session_date\nDEMO1001,Sample Student,MATH101,2026-11-02')}><Download size={15}/> CSV template</button><button className="btn btn-secondary" onClick={()=>download('examflow-students.csv',csv([['USN','Name'],...state.students.map(s=>[s.usn,s.name])]))}><ArrowDownToLine size={15}/> Export</button><button className="btn btn-primary" onClick={()=>setShowAdd(!showAdd)}><Plus size={16}/> Add student</button></div>{showAdd&&<section className="panel add-form"><div className="control-field"><label>USN</label><input value={studentForm.usn} onChange={e=>setStudentForm({...studentForm,usn:e.target.value})} placeholder="e.g. 1BM26CS001"/></div><div className="control-field"><label>FULL NAME</label><input value={studentForm.name} onChange={e=>setStudentForm({...studentForm,name:e.target.value})} placeholder="Student name"/></div><button className="btn btn-primary" onClick={addStudent}>Save student</button></section>}<section className="panel table-panel"><PanelTitle title="Student directory" subtitle={`${state.students.length} student records · records are stored in this browser`}/><div className="table-scroll"><table><thead><tr><th>USN</th><th>Student name</th><th>Registrations</th><th>Current assignment</th><th></th></tr></thead><tbody>{state.students.filter(s=>`${s.usn} ${s.name}`.toLowerCase().includes(search.toLowerCase())).map(s=>{const count=regs.filter(r=>r.studentId===s.id).length,a=current?.assignments.find(a=>a.studentId===s.id);return <tr key={s.id}><td><b className="mono">{s.usn}</b></td><td>{s.name}</td><td>{count}</td><td>{a?`${state.rooms.find(r=>r.id===a.roomId)?.name} · R${a.row} C${a.column}`:<span className="muted">Not seated</span>}</td><td><button className="text-btn" onClick={()=>{if(confirm(`Delete ${s.usn}? Related registrations and current plans may become stale.`)){setState({...state,students:state.students.filter(x=>x.id!==s.id),registrations:state.registrations.filter(r=>r.studentId!==s.id)});notify('Student and registrations deleted. Regenerate plans to refresh assignments.')}}}>Delete</button></td></tr>})}</tbody></table></div></section><section className="panel import-panel"><PanelTitle title="Import students from CSV" subtitle="Required columns: usn,name. Optional: subject_code,session_date. Import adds student records; it does not silently create registrations."/><textarea value={importText} onChange={e=>setImportText(e.target.value)} placeholder={'usn,name,subject_code,session_date\nDEMO1001,"Sample, Student",MATH101,2026-11-02'} rows={4}/><div className="button-row"><button className="btn btn-primary" onClick={importCsv}>Preview & import valid rows</button><span className="muted">Invalid rows are listed below.</span></div>{importErrors.length>0&&<div className="import-errors">{importErrors.map((x,i)=><p key={i}><AlertTriangle size={14}/>{x}</p>)}</div>}</section></>}
- {state&&page==='Subjects & Sessions'&&<><section className="panel table-panel"><PanelTitle title="Subjects" subtitle="Subject codes used for registrations and seating."/><div className="table-scroll"><table><thead><tr><th>Code</th><th>Subject</th><th>Sessions</th><th>Registrations</th></tr></thead><tbody>{state.subjects.map(s=><tr key={s.id}><td><b className="mono">{s.code}</b></td><td>{s.name}</td><td>{state.sessions.filter(x=>x.subjectId===s.id).length}</td><td>{regs.filter(r=>state.sessions.some(x=>x.id===r.sessionId&&x.subjectId===s.id)).length}</td></tr>)}</tbody></table></div></section><section className="panel"><PanelTitle title="Exam sessions & planning slots" subtitle="Sessions overlap into one planning slot when date and time ranges intersect."/><div className="session-cards">{slots.map((s,i)=><div className="session-card" key={s.id}><div className="session-card-top"><span className="mini-pill">SLOT {i+1}</span><b>{s.date}</b></div><div className="session-card-title">{s.start}–{s.end}</div>{s.sessions.map(id=>{const session=state.sessions.find(x=>x.id===id)!;const subject=state.subjects.find(x=>x.id===session.subjectId)!;return <div className="session-item" key={id}><div><b>{id} · {subject.code}</b><span>{subject.name}</span></div><span>{regs.filter(r=>r.sessionId===id).length} regs</span></div>})}<div className="session-card-foot"><b>{new Set(regs.filter(r=>s.sessions.includes(r.sessionId)).map(r=>r.studentId)).size} unique students</b><button className="text-btn" onClick={()=>{setSlotId(s.id);setPage('Planner')}}>Plan slot →</button></div></div>)}</div><div className="info-callout"><AlertTriangle size={16}/><span>DEMO DATA includes two deliberate clash registrations in Slot 1 and four students without registrations. Clash handling is performed by the engine when a plan is generated.</span></div></section></>}
- {state&&page==='Rooms'&&<div className="entity-grid">{state.rooms.map(room=>{const cap=Math.min(room.rows*room.columns,room.capacityOverride??room.rows*room.columns),occupancy=roomRows(room.id).length;return <section className="panel entity-card" key={room.id}><div className="entity-card-head"><div className="entity-icon"><DoorOpen size={19}/></div><span className={`mini-pill ${room.status==='active'?'success':'danger'}`}>{room.status}</span></div><h3>{room.name}</h3><p>{room.building} · {room.rows} rows × {room.columns} columns</p><div className="capacity-meter"><div><span>Usable capacity</span><b>{cap} seats</b></div><div className="meter"><i style={{width:`${Math.min(100,occupancy/Math.max(1,cap)*100)}%`}}/></div><span className="meter-note">{occupancy} assigned in current plan</span></div><div className="entity-actions"><button className="btn btn-secondary" onClick={()=>{const next=room.status==='active'?'withdraw-room':'restore-room';setDisruption(next);setTarget(room.id);setPage('Planner')}}>{room.status==='active'?'Withdraw room':'Restore room'}</button><button className="text-btn" onClick={()=>{setDisruption('reduce-capacity');setTarget(room.id);setCapacity(String(Math.max(0,cap-5)));setPage('Planner')}}>Reduce capacity</button></div></section>})}</div>}
- {state&&page==='Invigilators'&&<section className="panel table-panel"><PanelTitle title="Invigilator roster" subtitle="Eligibility and availability are checked during assignment."/><div className="table-scroll"><table><thead><tr><th>Staff ID</th><th>Name</th><th>Status</th><th>Unavailable sessions</th><th>Current assignment</th><th>Action</th></tr></thead><tbody>{state.invigilators.map(inv=>{const a=current?.invigilatorAssignments.find(a=>a.invigilatorId===inv.id);return <tr key={inv.id}><td><b className="mono">{inv.staffId}</b></td><td>{inv.name}</td><td><span className={`mini-pill ${inv.status==='active'?'success':'danger'}`}>{inv.status}</span></td><td>{inv.unavailableSessionIds.join(', ')||'None'}</td><td>{a?state.rooms.find(r=>r.id===a.roomId)?.name:'—'}</td><td><button className="text-btn" onClick={()=>{setDisruption(inv.status==='active'?'invigilator-unavailable':'restore-invigilator');setTarget(inv.id);setPage('Planner')}}>{inv.status==='active'?'Mark unavailable':'Restore'}</button></td></tr>})}</tbody></table></div><div className="info-callout"><Users size={16}/><span>One invigilator can be assigned to only one room per planning slot. INV05 is unavailable for Slot 1 in the demo dataset.</span></div></section>}
- {state&&page==='Review & Export'&&<><section className="export-grid"><ExportCard icon={FileSpreadsheet} title="Student seating CSV" detail="One row per assigned student with room and seat coordinates." action="Download seating CSV" onClick={exportAssignments}/><ExportCard icon={Users} title="Invigilator roster" detail="Current room coverage and assigned staff." action="Download roster" onClick={()=>{if(!current){notify('Generate a plan first.');return}download('examflow-invigilators.csv',csv([['Slot','Room','Invigilator ID','Name'],...current.invigilatorAssignments.map(a=>[a.slotId,state.rooms.find(r=>r.id===a.roomId)?.name??a.roomId,a.invigilatorId,state.invigilators.find(i=>i.id===a.invigilatorId)?.name??''])]))}}/><ExportCard icon={AlertTriangle} title="Conflict report" detail="Unassigned registrations, hard violations and soft warnings." action="Download conflict report" onClick={exportConflicts}/><ExportCard icon={DoorOpen} title="Room-wise seating" detail="Export each assignment grouped by room for invigilators." action="Download room-wise CSV" onClick={()=>{if(!current){notify('Generate a plan first.');return}download('examflow-room-wise.csv',csv([['Room','Row','Column','USN','Student','Subject'],...current.assignments.slice().sort((a,b)=>a.roomId.localeCompare(b.roomId)||a.row-b.row||a.column-b.column).map(a=>[state.rooms.find(r=>r.id===a.roomId)?.name??a.roomId,String(a.row),String(a.column),state.students.find(s=>s.id===a.studentId)?.usn??a.studentId,state.students.find(s=>s.id===a.studentId)?.name??'',state.subjects.find(s=>s.id===state.sessions.find(x=>x.id===a.sessionId)?.subjectId)?.code??''])]))}}/></section><section className="panel"><PanelTitle title="Revision history" subtitle="Accepted revisions are retained locally. Preview changes must be accepted to become a revision."/><div className="revision-list">{[...(state.revisions??[])].reverse().map(r=><div className="revision-row" key={r.id}><div className="revision-mark"><RefreshCw size={16}/></div><div className="revision-copy"><b>{r.id} · {r.changeDescription}</b><span>{new Date(r.createdAt).toLocaleString()} · {r.assignments.length} assignments · {r.computeMs} ms</span></div><span className={`mini-pill ${r.validation.status==='VALID'?'success':r.validation.status==='INVALID'?'danger':'warning'}`}>{r.validation.status}</span><button className="btn btn-secondary" onClick={()=>{setState({...state,currentRevisionId:r.id});notify(`Viewing ${r.id}. Validation status preserved: ${r.validation.status}.`)}}>View revision</button></div>)}{!state.revisions.length&&<p className="muted-pad">No revisions yet. Generate a plan to create the first revision.</p>}</div></section><section className="panel print-panel"><PanelTitle title="Print seating charts" subtitle="Use the browser's print dialog for a paper-friendly view."/><div className="button-row"><button className="btn btn-primary" disabled={!current} onClick={()=>window.print()}>Print current page</button><span className="muted">For best results, open Planner first and use landscape or fit-to-page.</span></div></section></>}
- </div><footer className="app-footer"><span>ExamFlow <span className="footer-dot">•</span> Local-first exam operations</span><span>Build for clarity. Validate every plan.</span></footer></main>{toast&&<div className="toast" role="status"><AlertTriangle size={17}/><span>{toast}</span><button onClick={()=>setToast('')} aria-label="Dismiss notification"><X size={15}/></button></div>}</div>
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Activity,
+  AlertTriangle,
+  BookOpen,
+  CalendarDays,
+  CheckCircle2,
+  ChevronDown,
+  Cpu,
+  DoorOpen,
+  FileSpreadsheet,
+  GraduationCap,
+  LayoutDashboard,
+  Menu,
+  Printer,
+  RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
+  SlidersHorizontal,
+  Upload,
+  Users,
+  X,
+  Zap,
+} from 'lucide-react';
+import { makeDemoData } from '../engine/demo';
+import {
+  generatePlan,
+  replan,
+  restoreRevision,
+  safeLoadAppState,
+  slotsFor,
+  swapSeats,
+  validatePlan,
+} from '../engine/engine';
+import type { AppState, Plan, PlanDiff, PlanRevision, Settings, Student, Room, Invigilator, Registration } from '../engine/types';
+import { PAGE_GROUP_MAP, type NavGroup, type Page, type ToastMessage } from './types';
+
+import { DashboardPage } from './pages/DashboardPage';
+import { PlannerPage } from './pages/PlannerPage';
+import { DisruptionStudioPage } from './pages/DisruptionStudioPage';
+import { ValidationPage } from './pages/ValidationPage';
+import { StudentsPage } from './pages/StudentsPage';
+import { SubjectsSessionsPage } from './pages/SubjectsSessionsPage';
+import { RoomsPage } from './pages/RoomsPage';
+import { InvigilatorsPage } from './pages/InvigilatorsPage';
+import { PrintExportPage } from './pages/PrintExportPage';
+import { BenchmarkSettingsPage } from './pages/BenchmarkSettingsPage';
+import { CsvImportModal } from './components/EntityModals';
+
+const STORE = 'examflow-state-v1';
+
+function loadState(): { state: AppState | null; bad: boolean } {
+  try {
+    const raw = localStorage.getItem(STORE);
+    return safeLoadAppState(raw);
+  } catch {
+    return { state: null, bad: true };
+  }
 }
-function Metric({icon:Icon,label,value,note,tone}:{icon:any;label:string;value:number|string;note:string;tone:string}){return <div className="metric-card"><div className={`metric-icon ${tone}`}><Icon size={19}/></div><div className="metric-label">{label}</div><div className="metric-value">{value}</div><div className="metric-note">{note}</div></div>}
-function PanelTitle({title,subtitle}:{title:string;subtitle?:string}){return <div className="panel-title"><div><h2>{title}</h2>{subtitle&&<p>{subtitle}</p>}</div></div>}
-function Readiness({icon:Icon,title,detail,good}:{icon:any;title:string;detail:string;good:boolean}){return <div className="readiness-row"><Icon size={17} className={good?'icon-good':'icon-warn'}/><div><b>{title}</b><span>{detail}</span></div><span className={`readiness-state ${good?'good':'warn'}`}>{good?'OK':'Review'}</span></div>}
-function QuickAction({icon:Icon,title,text,onClick}:{icon:any;title:string;text:string;onClick:()=>void}){return <button className="quick-action" onClick={onClick}><div className="quick-icon"><Icon size={18}/></div><div><b>{title}</b><span>{text}</span></div><span className="quick-arrow">↗</span></button>}
-function Diff({label,value}:{label:string;value:string|number}){return <div className="diff-item"><span>{label}</span><b>{value}</b></div>}
-function ExportCard({icon:Icon,title,detail,action,onClick}:{icon:any;title:string;detail:string;action:string;onClick:()=>void}){return <section className="panel export-card"><div className="export-icon"><Icon size={20}/></div><h3>{title}</h3><p>{detail}</p><button className="btn btn-secondary" onClick={onClick}><Download size={15}/>{action}</button></section>}
+
+function download(name: string, content: string, type = 'text/csv;charset=utf-8') {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export default function App() {
+  const initial = useMemo(loadState, []);
+  const [state, setState] = useState<AppState | null>(initial.state ?? makeDemoData());
+  const [page, setPage] = useState<Page>('Dashboard');
+  const [slotId, setSlotId] = useState('');
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const [mobile, setMobile] = useState(false);
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
+
+  // Disruption preview state
+  const [preview, setPreview] = useState<{
+    state: AppState;
+    plan: Plan;
+    diff: PlanDiff;
+    before: PlanRevision;
+  } | null>(null);
+
+  const notify = (text: string, type: ToastMessage['type'] = 'info') => {
+    const msg: ToastMessage = { id: String(Date.now()), text, type };
+    setToast(msg);
+    setTimeout(() => {
+      setToast(curr => (curr?.id === msg.id ? null : curr));
+    }, 4500);
+  };
+
+  // Sync state with localStorage
+  useEffect(() => {
+    if (state) {
+      try {
+        localStorage.setItem(STORE, JSON.stringify(state));
+      } catch {
+        notify('Browser local storage limit reached. Export your data to avoid loss.', 'warning');
+      }
+    }
+  }, [state]);
+
+  const slots = state ? slotsFor(state) : [];
+
+  useEffect(() => {
+    if (slots.length && (!slotId || !slots.some(s => s.id === slotId))) {
+      setSlotId(slots[0].id);
+    }
+  }, [state?.sessions.length]);
+
+  const current = state?.revisions.find(r => r.id === state.currentRevisionId) ?? null;
+
+  // Plan generation
+  const handleGenerate = () => {
+    if (!state || !slotId) return;
+    try {
+      const plan = generatePlan(state, slotId, new Date().toISOString());
+      const revision: PlanRevision = {
+        ...plan,
+        id: `REV-${(state.revisions.length + 1).toString().padStart(3, '0')}`,
+        parentRevisionId: current?.id,
+        createdAt: new Date().toISOString(),
+        changeDescription: 'Generated clash-free seating plan',
+        slotId,
+      };
+      setState({
+        ...state,
+        revisions: [...state.revisions, revision],
+        currentRevisionId: revision.id,
+      });
+      notify(
+        `Plan generated in ${plan.computeMs} ms: ${plan.assignments.length} seated, ${plan.unassigned.length} unassigned.`,
+        'success'
+      );
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Could not generate plan', 'error');
+    }
+  };
+
+  // Disaster Replan
+  const handleReplan = (disruption: { type: any; id: string; capacity?: number }) => {
+    if (!state || !current) {
+      notify('Please generate a plan before running disaster replanning.', 'warning');
+      return;
+    }
+    try {
+      const result = replan(state, current, disruption, new Date().toISOString());
+      setPreview({ ...result, before: current });
+      setPage('Disruption Studio');
+      notify(`Replan computed in ${result.plan.computeMs} ms! Review before/after comparison.`, 'info');
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Replanning failed', 'error');
+    }
+  };
+
+  const handleAcceptPreview = () => {
+    if (!state || !preview) return;
+    const r: PlanRevision = {
+      ...preview.plan,
+      id: `REV-${(state.revisions.length + 1).toString().padStart(3, '0')}`,
+      parentRevisionId: preview.before.id,
+      createdAt: new Date().toISOString(),
+      changeDescription: `Replan Disruption: ${preview.plan.validation.status}`,
+      slotId: preview.plan.slotId,
+    };
+    setState({
+      ...preview.state,
+      revisions: [...state.revisions, r],
+      currentRevisionId: r.id,
+    });
+    setPreview(null);
+    notify(`Revision accepted! Current status: ${r.validation.status}.`, 'success');
+  };
+
+  const handleDiscardPreview = () => {
+    setPreview(null);
+    notify('Disruption preview discarded. Preserved original revision.', 'info');
+  };
+
+  // Manual Coordinator Override Seat Swap
+  const handleSwapSeats = (
+    seatA: { roomId: string; row: number; column: number },
+    seatB: { roomId: string; row: number; column: number }
+  ) => {
+    if (!state || !current) return;
+    try {
+      const targetPlan = preview ? preview.plan : current;
+      const updatedPlan = swapSeats(state, targetPlan, seatA, seatB, new Date().toISOString());
+
+      if (preview) {
+        setPreview({ ...preview, plan: updatedPlan });
+      } else {
+        const rev: PlanRevision = {
+          ...updatedPlan,
+          id: `REV-${(state.revisions.length + 1).toString().padStart(3, '0')}`,
+          parentRevisionId: current.id,
+          createdAt: new Date().toISOString(),
+          changeDescription: `Manual Coordinator Override [${seatA.roomId}] ➔ [${seatB.roomId}]`,
+          slotId: updatedPlan.slotId,
+        };
+        setState({
+          ...state,
+          revisions: [...state.revisions, rev],
+          currentRevisionId: rev.id,
+        });
+      }
+      notify(
+        `Seats swapped! Re-validated in ${updatedPlan.computeMs} ms (${updatedPlan.validation.status}).`,
+        'success'
+      );
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Swap failed', 'error');
+    }
+  };
+
+  // Independent Re-validation
+  const handleRevalidate = () => {
+    if (!state || !current) return;
+    const v = validatePlan(state, current);
+    setState({
+      ...state,
+      revisions: state.revisions.map(r => (r.id === current.id ? { ...r, validation: v } : r)),
+    });
+    notify(`Independent verification: ${v.status} (${v.hardViolations.length} hard, ${v.softViolations.length} soft).`, 'info');
+  };
+
+  // CRUD Handlers
+  const handleSaveStudent = (data: { usn: string; name: string }, editId?: string) => {
+    if (!state) return;
+    if (editId) {
+      setState({
+        ...state,
+        students: state.students.map(s => (s.id === editId ? { ...s, ...data } : s)),
+      });
+      notify(`Updated candidate ${data.usn}.`, 'success');
+    } else {
+      if (state.students.some(s => s.usn.toLowerCase() === data.usn.toLowerCase())) {
+        notify(`Roll number (USN) ${data.usn} already exists.`, 'warning');
+        return;
+      }
+      const newSt: Student = { id: `ST-${Date.now()}`, ...data };
+      setState({ ...state, students: [...state.students, newSt] });
+      notify(`Candidate ${data.usn} added.`, 'success');
+    }
+  };
+
+  const handleDeleteStudent = (id: string) => {
+    if (!state) return;
+    setState({
+      ...state,
+      students: state.students.filter(s => s.id !== id),
+      registrations: state.registrations.filter(r => r.studentId !== id),
+    });
+    notify('Candidate record deleted.', 'info');
+  };
+
+  const handleBulkImport = (newStudents: Student[], newRegistrations: Registration[]) => {
+    if (!state) return;
+    setState({
+      ...state,
+      students: [...state.students, ...newStudents],
+      registrations: [...state.registrations, ...newRegistrations],
+    });
+    notify(
+      `Imported ${newStudents.length} candidates and registered ${newRegistrations.length} exam enrollments!`,
+      'success'
+    );
+  };
+
+  const handleSaveSubject = (data: { code: string; name: string; color?: string }, editId?: string) => {
+    if (!state) return;
+    if (editId) {
+      setState({
+        ...state,
+        subjects: state.subjects.map(s => (s.id === editId ? { ...s, ...data } : s)),
+      });
+      notify(`Subject ${data.code} updated.`, 'success');
+    } else {
+      const newSub = { id: `SUB-${Date.now()}`, ...data };
+      setState({ ...state, subjects: [...state.subjects, newSub] });
+      notify(`Subject ${data.code} created.`, 'success');
+    }
+  };
+
+  const handleDeleteSubject = (id: string) => {
+    if (!state) return;
+    const sessionIds = state.sessions.filter(s => s.subjectId === id).map(s => s.id);
+    setState({
+      ...state,
+      subjects: state.subjects.filter(s => s.id !== id),
+      sessions: state.sessions.filter(s => s.subjectId !== id),
+      registrations: state.registrations.filter(r => !sessionIds.includes(r.sessionId)),
+    });
+    notify('Subject and linked sessions removed.', 'info');
+  };
+
+  const handleSaveSession = (
+    data: { subjectId: string; date: string; startTime: string; endTime: string },
+    editId?: string
+  ) => {
+    if (!state) return;
+    if (editId) {
+      setState({
+        ...state,
+        sessions: state.sessions.map(s => (s.id === editId ? { ...s, ...data } : s)),
+      });
+      notify('Exam session schedule updated.', 'success');
+    } else {
+      const newSess = { id: `SESS-${Date.now()}`, ...data };
+      setState({ ...state, sessions: [...state.sessions, newSess] });
+      notify('Exam session scheduled.', 'success');
+    }
+  };
+
+  const handleDeleteSession = (id: string) => {
+    if (!state) return;
+    setState({
+      ...state,
+      sessions: state.sessions.filter(s => s.id !== id),
+      registrations: state.registrations.filter(r => r.sessionId !== id),
+    });
+    notify('Exam session deleted.', 'info');
+  };
+
+  const handleSaveRoom = (
+    data: {
+      name: string;
+      building?: string;
+      rows: number;
+      columns: number;
+      capacityOverride?: number;
+      status: Room['status'];
+    },
+    editId?: string
+  ) => {
+    if (!state) return;
+    if (editId) {
+      setState({
+        ...state,
+        rooms: state.rooms.map(r => (r.id === editId ? { ...r, ...data } : r)),
+      });
+      notify(`Hall ${data.name} updated.`, 'success');
+    } else {
+      const newRoom: Room = {
+        id: `R-${Date.now()}`,
+        unavailableSessionIds: [],
+        ...data,
+      };
+      setState({ ...state, rooms: [...state.rooms, newRoom] });
+      notify(`Hall ${data.name} registered.`, 'success');
+    }
+  };
+
+  const handleDeleteRoom = (id: string) => {
+    if (!state) return;
+    setState({ ...state, rooms: state.rooms.filter(r => r.id !== id) });
+    notify('Hall removed.', 'info');
+  };
+
+  const handleToggleRoomStatus = (roomId: string, nextStatus: Room['status']) => {
+    if (!state) return;
+    setState({
+      ...state,
+      rooms: state.rooms.map(r => (r.id === roomId ? { ...r, status: nextStatus } : r)),
+    });
+    notify(`Hall status changed to ${nextStatus}.`, 'info');
+  };
+
+  const handleSaveInvigilator = (
+    data: {
+      staffId: string;
+      name: string;
+      eligibleBuildings?: string[];
+      status: Invigilator['status'];
+    },
+    editId?: string
+  ) => {
+    if (!state) return;
+    if (editId) {
+      setState({
+        ...state,
+        invigilators: state.invigilators.map(i => (i.id === editId ? { ...i, ...data } : i)),
+      });
+      notify(`Invigilator ${data.name} updated.`, 'success');
+    } else {
+      const newInv: Invigilator = {
+        id: `INV-${Date.now()}`,
+        unavailableSessionIds: [],
+        ...data,
+      };
+      setState({ ...state, invigilators: [...state.invigilators, newInv] });
+      notify(`Invigilator ${data.name} added to roster.`, 'success');
+    }
+  };
+
+  const handleDeleteInvigilator = (id: string) => {
+    if (!state) return;
+    setState({ ...state, invigilators: state.invigilators.filter(i => i.id !== id) });
+    notify('Invigilator removed.', 'info');
+  };
+
+  const handleToggleInvigilatorStatus = (invId: string, nextStatus: Invigilator['status']) => {
+    if (!state) return;
+    setState({
+      ...state,
+      invigilators: state.invigilators.map(i => (i.id === invId ? { ...i, status: nextStatus } : i)),
+    });
+    notify(`Invigilator status updated to ${nextStatus}.`, 'info');
+  };
+
+  const handleUpdateSettings = (settings: Settings) => {
+    if (!state) return;
+    setState({ ...state, settings });
+    notify('Engine settings saved.', 'success');
+  };
+
+  const handleResetDemo = () => {
+    setState(makeDemoData());
+    setPreview(null);
+    setPage('Dashboard');
+    notify('Original demo dataset restored (64 candidates, 4 rooms, 5 staff).', 'info');
+  };
+
+  if (!state) return null;
+
+  // 5 Navigation Groups strictly adhering to Master Prompt Section 3
+  const navSections: {
+    group: NavGroup;
+    items: { name: Page; icon: any; badge?: string }[];
+  }[] = [
+    {
+      group: 'Overview',
+      items: [{ name: 'Dashboard', icon: LayoutDashboard }],
+    },
+    {
+      group: 'Planning Operations',
+      items: [
+        { name: 'Planner', icon: SlidersHorizontal },
+        { name: 'Disruption Studio', icon: RefreshCw },
+      ],
+    },
+    {
+      group: 'Data Management',
+      items: [
+        { name: 'Students', icon: GraduationCap },
+        { name: 'Subjects & Sessions', icon: CalendarDays },
+        { name: 'Rooms', icon: DoorOpen },
+        { name: 'Invigilators', icon: Users },
+      ],
+    },
+    {
+      group: 'Validation & Diagnostics',
+      items: [
+        {
+          name: 'Validation',
+          icon: ShieldCheck,
+          badge: current?.validation.status === 'VALID' ? 'dot-green' : 'dot-amber',
+        },
+        { name: 'Stress Benchmark', icon: Cpu },
+      ],
+    },
+    {
+      group: 'Reports & Exports',
+      items: [{ name: 'Print & Notice Board', icon: Printer }],
+    },
+  ];
+
+  const currentNavGroup = PAGE_GROUP_MAP[page] ?? 'Overview';
+
+  return (
+    <div className="app-shell">
+      {/* Refined Forest Green Sidebar */}
+      <aside className={`sidebar ${mobile ? 'open' : ''}`}>
+        <div className="brand">
+          <div className="brand-mark">
+            <BookOpen size={20} />
+          </div>
+          <div>
+            <strong>ExamFlow</strong>
+            <span>UNIVERSITY OPERATIONS</span>
+          </div>
+          <button className="icon-btn mobile-close" onClick={() => setMobile(false)} aria-label="Close navigation">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="campus-pill">
+          <span className="pulse" /> CONTROLLER OF EXAMS <ChevronDown size={13} />
+        </div>
+
+        {navSections.map(section => (
+          <div className="nav-group" key={section.group}>
+            <p>{section.group}</p>
+            {section.items.map(item => (
+              <button
+                key={item.name}
+                onClick={() => {
+                  setPage(item.name);
+                  setMobile(false);
+                }}
+                className={`nav-item ${page === item.name ? 'selected' : ''}`}
+              >
+                <item.icon size={16} />
+                <span>{item.name}</span>
+                {item.badge && <i className={item.badge} />}
+              </button>
+            ))}
+          </div>
+        ))}
+
+        <div className="sidebar-bottom">
+          <div className="secure-icon">
+            <ShieldCheck size={16} />
+          </div>
+          <div>
+            <b>Local-First Storage</b>
+            <span>Zero cloud transmission · Private</span>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Operations Work Area */}
+      <main className="main-area">
+        {/* Compact Top Bar */}
+        <header className="topbar">
+          <div className="topbar-left">
+            <button className="icon-btn mobile-menu" onClick={() => setMobile(true)} aria-label="Open navigation">
+              <Menu size={18} />
+            </button>
+            <div className="breadcrumb-trail">
+              <span className="crumb-root">{currentNavGroup}</span>
+              <span className="crumb-slash">/</span>
+              <span className="crumb-current">{page}</span>
+            </div>
+
+            <div className="topbar-slot-pill">
+              <span>Current Slot:</span>
+              <b>{slotId ? `Slot 1 (${slotId})` : 'None'}</b>
+            </div>
+
+            {current && (
+              <div
+                className={`topbar-status-badge ${
+                  current.validation.status === 'VALID'
+                    ? 'valid'
+                    : current.validation.status === 'VALID_WITH_WARNINGS'
+                    ? 'warning'
+                    : 'invalid'
+                }`}
+              >
+                {current.validation.status === 'VALID' ? (
+                  <CheckCircle2 size={12} />
+                ) : (
+                  <AlertTriangle size={12} />
+                )}
+                <span>{current.validation.status.replaceAll('_', ' ')}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="topbar-right">
+            {state.students.some(s => s.usn === 'DEMO0001') && (
+              <span className="demo-badge">
+                <span /> DEMO DATA
+              </span>
+            )}
+            <span className="offline-tag">
+              <span /> OFFLINE ENGINE
+            </span>
+            <span className="avatar">EF</span>
+          </div>
+        </header>
+
+        <div className="content">
+          <div className="page-heading">
+            <div>
+              <div className="eyebrow">
+                UNIVERSITY EXAMINATION CONTROLLER <span>•</span> TEAM 2392608111
+              </div>
+              <h1>{page}</h1>
+              <p>
+                {
+                  {
+                    Dashboard: 'Real-time university examination readiness, capacity utilization, and planning health.',
+                    Planner: 'Interactive room seating grids, checkerboard parity interleaving, and manual overrides.',
+                    'Disruption Studio': 'Simulate morning hall/staff disruptions with autonomous minimal-displacement replanning.',
+                    Validation: 'Authoritative independent constraint verification (H1–H8 & S1) with offending pair drilldowns.',
+                    'Print & Notice Board': 'Paper-ready master notice board charts, classroom door slips, attendance sheets, and CSVs.',
+                    Students: 'Manage university candidate enrollments, registrations, and smart bulk CSV imports.',
+                    'Subjects & Sessions': 'Scheduled courses, exam windows, and grouped overlapping planning slots.',
+                    Rooms: 'Physical campus examination halls, desk dimensions, and capacity overrides.',
+                    Invigilators: 'Supervising faculty roster, building permissions, and hall assignments.',
+                    'Stress Benchmark': 'Live in-browser scalability stress simulations (100–1,000 candidates) and engine rules.',
+                  }[page]
+                }
+              </p>
+            </div>
+
+            <div className="heading-actions">
+              <button className="btn btn-secondary" onClick={handleResetDemo}>
+                <RefreshCw size={14} /> Load Demo Data
+              </button>
+            </div>
+          </div>
+
+          {/* Router Content */}
+          {page === 'Dashboard' && (
+            <DashboardPage
+              state={state}
+              current={current}
+              slotId={slotId}
+              setSlotId={setSlotId}
+              setPage={setPage}
+              onGenerate={handleGenerate}
+              onResetDemo={handleResetDemo}
+            />
+          )}
+
+          {page === 'Planner' && (
+            <PlannerPage
+              state={state}
+              current={current}
+              slotId={slotId}
+              setSlotId={setSlotId}
+              onGenerate={handleGenerate}
+              onRevalidate={handleRevalidate}
+              onSwapSeats={handleSwapSeats}
+              onGoToDisruptionStudio={() => setPage('Disruption Studio')}
+              onPrintHall={() => setPage('Print & Notice Board')}
+            />
+          )}
+
+          {page === 'Disruption Studio' && (
+            <DisruptionStudioPage
+              state={state}
+              current={current}
+              onReplan={handleReplan}
+              onAcceptPreview={handleAcceptPreview}
+              onDiscardPreview={handleDiscardPreview}
+              preview={preview}
+            />
+          )}
+
+          {page === 'Validation' && (
+            <ValidationPage
+              state={state}
+              current={current}
+              onRevalidate={handleRevalidate}
+              onGoToPlanner={() => setPage('Planner')}
+            />
+          )}
+
+          {page === 'Print & Notice Board' && (
+            <PrintExportPage
+              state={state}
+              current={current}
+              onDownloadCsv={download}
+              onRestoreRevision={revId => {
+                setState({ ...state, currentRevisionId: revId });
+                notify(`Restored active view to revision ${revId}.`, 'info');
+              }}
+            />
+          )}
+
+          {page === 'Students' && (
+            <StudentsPage
+              state={state}
+              onSaveStudent={handleSaveStudent}
+              onDeleteStudent={handleDeleteStudent}
+              onOpenCsvImport={() => setCsvImportOpen(true)}
+              onDownloadCsv={download}
+            />
+          )}
+
+          {page === 'Subjects & Sessions' && (
+            <SubjectsSessionsPage
+              state={state}
+              onSaveSubject={handleSaveSubject}
+              onDeleteSubject={handleDeleteSubject}
+              onSaveSession={handleSaveSession}
+              onDeleteSession={handleDeleteSession}
+              onPlanSlot={sId => {
+                setSlotId(sId);
+                setPage('Planner');
+              }}
+            />
+          )}
+
+          {page === 'Rooms' && (
+            <RoomsPage
+              state={state}
+              onSaveRoom={handleSaveRoom}
+              onDeleteRoom={handleDeleteRoom}
+              onToggleStatus={handleToggleRoomStatus}
+              onTriggerDisruption={disruption => {
+                handleReplan(disruption);
+              }}
+            />
+          )}
+
+          {page === 'Invigilators' && (
+            <InvigilatorsPage
+              state={state}
+              onSaveInvigilator={handleSaveInvigilator}
+              onDeleteInvigilator={handleDeleteInvigilator}
+              onToggleStatus={handleToggleInvigilatorStatus}
+              onTriggerDisruption={disruption => {
+                handleReplan(disruption);
+              }}
+            />
+          )}
+
+          {page === 'Stress Benchmark' && (
+            <BenchmarkSettingsPage
+              state={state}
+              onUpdateSettings={handleUpdateSettings}
+              onLoadBenchmarkScenario={benchState => {
+                setState(benchState);
+                const s = slotsFor(benchState);
+                if (s.length) setSlotId(s[0].id);
+                setPage('Planner');
+                notify('Large benchmark scenario loaded! Click Generate Plan to inspect.', 'success');
+              }}
+              onResetDemo={handleResetDemo}
+            />
+          )}
+        </div>
+
+        <footer className="app-footer">
+          <span>
+            ExamFlow <span className="footer-dot">•</span> University Examination Operations Platform
+          </span>
+          <span>Team 2392608111 · Explainable Seating, Replanned in Seconds</span>
+        </footer>
+      </main>
+
+      {/* Real-time Operations Toast */}
+      {toast && (
+        <div className={`toast toast-${toast.type ?? 'info'}`} role="status">
+          {toast.type === 'error' || toast.type === 'warning' ? (
+            <AlertTriangle size={16} />
+          ) : (
+            <CheckCircle2 size={16} />
+          )}
+          <span>{toast.text}</span>
+          <button onClick={() => setToast(null)} aria-label="Dismiss notification">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* CSV Bulk Importer Modal */}
+      {csvImportOpen && (
+        <CsvImportModal
+          state={state}
+          onImport={handleBulkImport}
+          onClose={() => setCsvImportOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
