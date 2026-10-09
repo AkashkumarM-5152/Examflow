@@ -1,14 +1,71 @@
-# ExamFlow — Intelligent University Exam Seating & Invigilation Engine
+<div align="center">
 
-> **BST Internal Hackathon — Final Production Edition**  
-> **Team:** 2392608111-Hackathon Babu  
-> **Problem Statement:** *"Exam seating with no clashes, replanned in seconds."*
+# 🌿 ExamFlow
+### Intelligent University Exam Seating & Invigilation Engine
 
-ExamFlow is a local-first, zero-cloud web application for generating, validating, reviewing, and replanning university examination seating and invigilation rosters in milliseconds.
+**Plan smarter. Prevent clashes. Replan in seconds.**
+
+[![React](https://img.shields.io/badge/React-18.3.1-149ECA?style=for-the-badge&logo=react&logoColor=white)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7.2-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Vite](https://img.shields.io/badge/Vite-6.0.7-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://vite.dev/)
+[![Vitest](https://img.shields.io/badge/Tests-Vitest-6E9F18?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev/)
+[![Privacy](https://img.shields.io/badge/Privacy-Local--First-247A60?style=for-the-badge&logo=shield&logoColor=white)](#-privacy-by-design)
+
+**BST Internal Hackathon** · **Team 2392608111-Hackathon Babu**
+
+> 🟢 **The challenge:** “Exam seating with no clashes, replanned in seconds.”
+>
+> ExamFlow turns spreadsheet-heavy exam coordination into a fast, transparent workflow for seating candidates, assigning invigilators, validating constraints, and handling last-minute disruptions.
+
+</div>
 
 ---
 
-## Exact Problem Statement
+## ✨ At a Glance
+
+| 🧩 Capability | 💡 What it does |
+|---|---|
+| 🪑 **Smart seating** | Generates seat assignments while considering capacity, room availability, and same-subject adjacency. |
+| 🛡️ **Independent validation** | Checks hard constraints and clearly identifies conflicts or infeasible plans. |
+| ⚡ **Rapid replanning** | Reworks affected assignments after a room or invigilator becomes unavailable. |
+| 🔍 **Explainable decisions** | Gives plain-English reasons for important planning choices and trade-offs. |
+| 🖨️ **Exam-day outputs** | Creates printable notice boards, door slips, and attendance registers. |
+| 🔐 **Local-first privacy** | Keeps roster data in the browser; no cloud backend is required. |
+
+## 🧭 Contents
+
+- [🎯 Problem Statement](#exact-problem-statement)
+- [👥 Team](#team)
+- [🧠 What We Built & Why](#what-we-built--why)
+- [⚙️ Assumptions & Design System](#problem-interpretation-and-assumptions)
+- [🏗️ Architecture & Tech Stack](#architecture--technology-stack)
+- [🛡️ Algorithm & Constraints](#algorithm--constraints-suite)
+- [🚀 Installation & Commands](#installation--commands)
+- [🧪 Demo Scenarios](#reproducing-demo--failure-scenarios)
+- [📄 CSV Import / Export](#csv-import--export-specifications)
+- [✅ Regression Tests](#formal-regression-test-suite-vitest)
+- [⚖️ Trade-offs](#technical-decisions-and-trade-offs)
+- [🚧 Honest Limitations](#honest-unfinished-features--limitations)
+- [🌐 Deployment](#deployment)
+
+---
+
+## 💡 What We Built & Why
+
+We built **ExamFlow** to replace fragile spreadsheet-based exam planning with a fast, explainable workflow for seating students and assigning invigilators.
+
+- 🪑 **Generate a seating plan:** assign candidates to usable seats while checking room capacity and scheduling conflicts.
+- 🛡️ **Validate the plan:** surface hard-rule violations and explain soft-rule trade-offs instead of silently hiding them.
+- ⚡ **Replan after disruptions:** respond to a room or invigilator becoming unavailable while preserving unaffected assignments where possible.
+- 🗂️ **Manage operational data:** maintain students, subjects, sessions, rooms, and invigilators; import and export supported CSV data.
+- 🖨️ **Prepare exam-day outputs:** produce printable notice boards, door slips, and attendance registers.
+- 🔐 **Keep records local:** store roster data in the browser rather than sending candidate details to a cloud backend.
+
+**Why it matters:** exam coordinators need to catch conflicts before exam day, understand why a plan has limitations, and recover quickly when room or staff availability changes.
+
+---
+
+## 🎯 Exact Problem Statement
 
 > *"Exam seating with no clashes, replanned in seconds*
 > 
@@ -16,22 +73,30 @@ ExamFlow is a local-first, zero-cloud web application for generating, validating
 
 ---
 
-## Team
+## 👥 Team
 
-- **Team:** 2392608111-Hackathon Babu
-- **Team leader:** Mohd Faiz Azher
-- Mohd Faiz Azher — USN 2392608111
-- Devansh Bansal — USN 2392608011
-- Arpit Nitin Kolte — USN 2392608018
-- Akash Kumar M — USN 2392608098
-- Harshit Kumar — USN 2392608139
-- Viraj Bashishtha — USN 2392608051
+| Role | Member | USN |
+|---|---|---|
+| 👑 **Team Leader** | **Mohd Faiz Azher** | `2392608111` |
+| Member | Devansh Bansal | `2392608011` |
+| Member | Arpit Nitin Kolte | `2392608018` |
+| Member | Akash Kumar M | `2392608098` |
+| Member | Harshit Kumar | `2392608139` |
+| Member | Viraj Bashishtha | `2392608051` |
 
-**Eligibility note:** The event instructions specify a team size of 4–5, while six members are listed above. The organizers must confirm eligibility before submission. No member has been silently removed.
+**Team ID:** `2392608111-Hackathon Babu`
+
+> ⚠️ **Eligibility note:** The event instructions specify a team size of 4–5, while six members are listed above. The organizers must confirm eligibility before submission. No member has been silently removed.
 
 ---
 
-## Problem Interpretation and Assumptions
+## 🔐 Privacy by Design
+
+ExamFlow is designed to run locally in the browser. According to the project assumptions, student names, USNs, and academic records remain in browser `localStorage`; the application does not require a cloud backend, analytics service, or external API calls. This improves local control of data, but it also means records are tied to the current browser profile.
+
+---
+
+## ⚙️ Problem Interpretation and Assumptions
 
 1. **Planning Slots:** The engine groups all exam sessions that overlap in date and time window into a single operational planning slot.
 2. **Deterministic Clash Resolution:** When a candidate is registered for multiple exams in overlapping sessions within the same slot, the engine deterministically seats them in the primary session (lowest session ID tie-breaker) and explicitly classifies every conflicting registration as `EXAM_CLASH`.
@@ -41,7 +106,7 @@ ExamFlow is a local-first, zero-cloud web application for generating, validating
 
 ---
 
-## Design System: Forest Green & Warm Ivory
+## 🎨 Design System: Forest Green & Warm Ivory
 
 ExamFlow uses a distinguished, academic operations design system:
 
@@ -63,7 +128,7 @@ ExamFlow uses a distinguished, academic operations design system:
 
 ---
 
-## Architecture & Technology Stack
+## 🏗️ Architecture & Technology Stack
 
 ```text
 React 18.3.1 + Vite 6.0.7 UI (src/ui)
@@ -90,7 +155,15 @@ React 18.3.1 + Vite 6.0.7 UI (src/ui)
 
 ---
 
-## Algorithm & Constraints Suite
+## 🛡️ Algorithm & Constraints Suite
+
+<details>
+<summary><strong>How to read the constraint labels</strong></summary>
+
+- <span style="color:#247A50"><strong>Hard constraints (H1–H8)</strong></span> are safety and correctness rules the plan must satisfy.
+- <span style="color:#A96B17"><strong>Soft constraints (S1–S4)</strong></span> are goals the engine tries to optimize and explain.
+
+</details>
 
 ### 1. Hard Constraints (H1–H8) — Must Never Be Violated
 - **H1 · One Student per Seat:** Every seated candidate has distinct physical coordinates `(roomId, row, column)`. Zero collision detected.
@@ -118,7 +191,9 @@ When a room is withdrawn or capacity is reduced:
 
 ---
 
-## Installation & Commands
+## 🚀 Installation & Commands
+
+> 🧑‍💻 **Prerequisite:** Node.js and npm should be installed. Run these commands from the project root.
 
 ```bash
 # 1. Install dependencies
@@ -142,7 +217,9 @@ npm run preview
 
 ---
 
-## Reproducing Demo & Failure Scenarios
+## 🧪 Reproducing Demo & Failure Scenarios
+
+> 🧪 **Suggested judging flow:** Start with the standard plan, demonstrate a room withdrawal, then show the exact capacity-shortfall scenario and the validation result.
 
 ### Scenario A: Standard Plan Generation & Explainability
 1. Click **Load Demo Data** to reset to the fictional baseline: 64 students, 4 subjects, 4 sessions, 4 rooms, 5 staff.
@@ -174,7 +251,7 @@ npm run preview
 
 ---
 
-## CSV Import / Export Specifications
+## 📄 CSV Import / Export Specifications
 
 ### 1. Robust CSV Parser
 - Supports UTF-8 Byte Order Marks (`\uFEFF`).
@@ -194,7 +271,7 @@ All CSV exports sanitize fields starting with `= `, `+ `, `- `, or `@ ` by prepe
 
 ---
 
-## Formal Regression Test Suite (Vitest)
+## ✅ Formal Regression Test Suite (Vitest)
 
 The engine includes 13 regression tests in `src/engine/engine.test.ts` verifying all requirements:
 
@@ -218,7 +295,7 @@ All 13 tests run via `npm test` and pass cleanly.
 
 ---
 
-## Technical Decisions and Trade-offs
+## ⚖️ Technical Decisions and Trade-offs
 
 - **Local-First Browser Persistence:** Student records and examination rosters are kept entirely in local storage. No network transmission or cloud exposure of candidate USNs occurs. Trade-off: Data is confined to the active browser profile.
 - **Deterministic Heuristic with Local Search:** Uses checkerboard parity interleaving followed by greedy pairwise swaps capped at 500 checks. Achieves sub-25ms response time and immediate feedback for coordinators. Trade-off: Heuristic is not mathematically guaranteed optimal compared to an offline ILP solver.
@@ -226,6 +303,42 @@ All 13 tests run via `npm test` and pass cleanly.
 
 ---
 
-## Deployment
+## 🚧 Honest Unfinished Features & Limitations
+
+The following are important limitations to understand when evaluating or using this hackathon build:
+
+- **No cross-device or cloud sync:** data is stored in the current browser profile. It does not automatically sync between coordinators or devices.
+- **No automatic cloud backup:** clearing browser storage or losing the browser profile may remove saved data. Export important data where supported and keep a separate backup.
+- **Heuristic, not guaranteed optimal:** the seating engine uses deterministic heuristics and bounded local search. It aims to reduce same-subject edge adjacency, but it does not guarantee a mathematically optimal arrangement.
+- **Some constraints can make a complete plan impossible:** if available seats or eligible invigilators are insufficient, the application reports unassigned candidates or uncovered rooms rather than inventing capacity or claiming the plan is valid.
+- **Adjacency definition is limited:** only immediate up/down/left/right neighbours count; diagonal neighbours are not treated as adjacent.
+- **Real-world integration is not included:** the documented architecture has no cloud backend or external API integration. Data must be entered or imported into the app.
+- **Production readiness still needs real-world validation:** the included regression tests cover the documented scenarios, but they do not replace testing with each institution's actual policies, datasets, browsers, and exam workflows.
+
+These are limitations, not claims that the features are secretly available. The documented commands and demo scenarios are the intended way to run and evaluate the current build.
+
+---
+
+## 🌐 Deployment
+
+<details>
+<summary><strong>Production build and hosting notes</strong></summary>
+
+The application is designed to build into a static `dist/` bundle. No backend server, Docker container, or environment variables are required for the documented deployment flow.
+
+</details>
 
 Run `npm run build` to generate the production bundle in `dist/`. Deploy the `dist/` folder to any static hosting provider (Vercel, Netlify, Cloudflare Pages, GitHub Pages). No backend server, Docker container, or environment variables are required.
+
+
+---
+
+<div align="center">
+
+### 🌿 ExamFlow · Built for clearer, calmer exam operations
+
+**Team 2392608111-Hackathon Babu** · BST Internal Hackathon
+
+<sub>Designed around transparency, operational reliability, and local-first data handling.</sub>
+
+</div>
